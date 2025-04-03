@@ -1,0 +1,72 @@
+name: Process ZIP Files
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  process-zips:
+    name: Process ZIP Files
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y zip unzip
+
+    - name: Create directories
+      run: |
+        mkdir -p zips processed
+
+    - name: Process ZIP files
+      run: |
+        WORK_DIR="${{ github.workspace }}/zips"
+        DEST_DIR="${{ github.workspace }}/processed"
+        
+        cd "$WORK_DIR" || exit 1
+
+        for ORIGINAL_ZIP in *.zip; do
+          [ -f "$ORIGINAL_ZIP" ] || continue
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Processing: $ORIGINAL_ZIP"
+
+          TEMP_DIR=$(mktemp -d)
+          NEW_ZIP="${ORIGINAL_ZIP%.zip}_modified.zip"
+
+          # Step 1: Unzip
+          if ! unzip -q "$ORIGINAL_ZIP" -d "$TEMP_DIR"; then
+            echo "Error unzipping, skipping"
+            rm -rf "$TEMP_DIR"
+            continue
+          fi
+
+          # Step 2: Modify .sha256 files
+          find "$TEMP_DIR" -type f -name "*.sha256" -exec sed -i '/mod\/notification\.sh/s/^/#/' {} +
+
+          # Step 3: Delete notification.sh
+          find "$TEMP_DIR" -type f -name "notification.sh" -delete
+
+          # Step 4: Re-zip
+          (cd "$TEMP_DIR" && zip -qr "$DEST_DIR/$NEW_ZIP" . ) && echo "✅ Success: $NEW_ZIP"
+
+          # Cleanup
+          rm -rf "$TEMP_DIR"
+        done
+
+        if [ -z "$(ls -A "$DEST_DIR")" ]; then
+          echo "No files processed"
+          exit 1
+        fi
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: processed-zips
+        path: processed/
+        if-no-files-found: error
